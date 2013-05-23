@@ -1,0 +1,9 @@
+*.pyc
+lot/settings_local.py
+*.log
+*.pid
+*.orig
+.vagrant
+.DS_Store
+.*.swp
+*.egg-info
