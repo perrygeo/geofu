@@ -2,9 +2,6 @@
 """
 geofu
 """
-__all__ = []
-__version__ = "0.0.1"
-
 
 from fiona.collection import Collection as FionaCollection
 from shapely.geometry import mapping, shape
@@ -16,14 +13,39 @@ class GeofuCollection(FionaCollection):
     Geofu collection extends fiona collection
     """
 
+    def mapfart(self):
+        import requests
+        mapfart_url = 'http://mapfart.com/api/fart'
+        res = requests.post(mapfart_url, data=self.geojson())
+        if res.status_code != 200:
+            raise Exception("Mapfart returned a %d" % res.status_code)
+        return res.text.strip()
+
+    def validate_geojson(self):
+        import requests
+        validate_endpoint = 'http://geojsonlint.com/validate'
+        res = requests.post(validate_endpoint, data=self.geojson())
+        return res.json()
+
+    def geojson(self, indent=None):
+        import json
+        fc = {
+            "type": "FeatureCollection",
+            "features": [dict(type='Feature', **x) for x in list(self)],
+            "crs": None  # TODO
+        }
+        return json.dumps(fc, indent=indent)
+
+    def tempds(self, opname):
+        return "/tmp/%s_%s.shp" % (self.name, opname)
+
     def buffer(self, distance):
-        # from geofu.tools import buffer
-        # buffer.buffer(self, *args, **kwargs)
         out_schema = self.schema.copy()
         out_schema['geometry'] = 'Polygon'
 
-        out_shp_path = "/tmp/test.shp"
-        with collection(out_shp_path, "w", "ESRI Shapefile", out_schema) as out_collection:
+        tempds = self.tempds("buffer_%s" % distance)
+        with collection(tempds, "w",
+                        "ESRI Shapefile", out_schema) as out_collection:
             for in_feature in self:
                 out_feature = in_feature.copy()
                 out_feature['geometry'] = mapping(
@@ -31,26 +53,26 @@ class GeofuCollection(FionaCollection):
                 )
                 out_collection.write(out_feature)
 
-        return open(out_shp_path, "r")
+        return collection(tempds, "r")
 
-    def reproject(self, out_crs):
-        out_schema = self.schema.copy()
-
+    def reproject(self, crsish):
         in_proj = Proj(self.crs)
+        out_schema = self.schema.copy()
+        out_crs = guess_crs(crsish)
 
-        #out_crs = guess_crs(crs_like)
-
-        out_shp_path = "/tmp/test2.shp"
-        with collection(out_shp_path, "w", "ESRI Shapefile", out_schema, crs=out_crs) as out_collection:
+        tmpds = self.tempds("reproject_%s" % crsish)
+        with collection(tmpds, "w", "ESRI Shapefile",
+                        out_schema, crs=out_crs) as out_collection:
             out_proj = Proj(out_collection.crs)
             for in_feature in self:
 
                 out_feature = in_feature.copy()
-                x2, y2 = transform(in_proj, out_proj, *in_feature['geometry']['coordinates'])
+                x2, y2 = transform(in_proj, out_proj,
+                                   *in_feature['geometry']['coordinates'])
                 out_feature['geometry']['coordinates'] = x2, y2
                 out_collection.write(out_feature)
 
-        return open(out_shp_path, "r")
+        return collection(tmpds, "r")
 
 
 def open(path, mode='r', driver=None, schema=None, crs=None, encoding=None):
@@ -94,18 +116,28 @@ collection = open
 
 
 def guess_crs(thing):
-    from fiona.crs import from_epsg
+    from fiona import crs
 
-    #is it a crs object itself?
+    try:
+        #is it a crs object itself?
+        if thing.keys() and \
+           set(thing.keys()).issubset(set(crs.all_proj_keys)):
+            return thing
+    except AttributeError:
+        pass
+
     try:
         # is it a collection or something else with a crs attr?
         return thing.crs
     except AttributeError:
         pass
 
-    print thing
-    return from_epsg(thing)
+    try:
+        # if it's an int, use an epsg code
+        epsg = int(thing)
+        return crs.from_epsg(epsg)
+    except ValueError:
+        pass
 
-    # TODO what about wkt, .prj file path, proj4 string, pyproj object
-    raise AttributeError
-
+    # finally try a string parser
+    return crs.from_string(thing)
