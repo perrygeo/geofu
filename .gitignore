@@ -7,3 +7,5 @@ lot/settings_local.py
 .DS_Store
 .*.swp
 *.egg-info
+env-geofu/*
+TODO
