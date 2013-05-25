@@ -1,25 +1,24 @@
-from geofu import collection
+import geofu
 
-pts = collection("test_data/at_shelters.shp", "r")
+pts = geofu.load("test_data/at_shelters.shp")
+
+# what's out coordinate reference system
+print pts.crs
 
 # reproject to US National Atlas
-#states = state_centroids.reproject(2163)
-pts = polys.centroid()
+pts = pts.reproject(2163)
 
-import ipdb; ipdb.set_trace()
+# buffer by 5km
+ptbuff = pts.buffer(5000)
 
-# buffer the points by 5000 meters
-#point_buffers = points_proj.buffer(5000)
+# use the mapfart.com web service to render it
+ptbuff.mapfart(show=True)
 
-# print point_buffers.geojson(indent=2)[:200]
-# print "And again..."
-# print point_buffers.geojson(indent=2)[:200]
+# Get it as a fiona collection
+print type(ptbuff.collection())
 
-#print point_buffers.validate_geojson()
-# print point_buffers.mapfart(display=True)
+# let's examine the geojson string
+print ptbuff.geojson(indent=2)[:200]
 
-
-# TODO
-#print point_buffers.save()
-#print point_buffers.render() # png, svg, geojson/html
-#print point_buffers.summary()
+# And use geojsonlint.com to validate it
+print "Is this geojson valid?", ptbuff.validate_geojson()

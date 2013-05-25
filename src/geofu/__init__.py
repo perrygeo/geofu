@@ -3,34 +3,28 @@
 geofu
 """
 
-from fiona.collection import Collection as FionaCollection
 from shapely.geometry import mapping, shape
 from pyproj import Proj, transform
 
 
-class GeofuCollection(FionaCollection):
-    """
-    Geofu collection extends fiona collection
-    """
+class Layer():
 
-    def copy(self):
-        encoding = self.encoding
-        print encoding
-        if encoding.lower() in ["-ogr-detected-encoding"]:
-            encoding = None
+    def __init__(self, path):
+        self.path = path
+        self.name = "testname"
 
-        return collection(
-            self.path,
-            mode='r',
-            driver=self.driver,
-            schema=self.schema,
-            crs=self.crs,
-            encoding=encoding
-        )
+    @property
+    def crs(self):
+        return self.collection().crs
 
-    rewind = copy
+    def collection(self, *args, **kwargs):
+        """
+        a fiona collection for the layer
+        """
+        from fiona import collection
+        return collection(self.path, *args, **kwargs)
 
-    def mapfart(self, display=False, url_only=False):
+    def mapfart(self, show=False, url_only=False):
         import requests
         mapfart_url = 'http://mapfart.com/api/fart'
         res = requests.post(mapfart_url, data=self.geojson())
@@ -45,7 +39,7 @@ class GeofuCollection(FionaCollection):
             with open(filename, 'wb') as fh:
                 for chunk in res.iter_content(1024):
                     fh.write(chunk)
-            if display:
+            if show:
                 from PIL import Image
                 im = Image.open(filename)
                 im.show()
@@ -61,14 +55,14 @@ class GeofuCollection(FionaCollection):
 
     def geojson(self, indent=None):
         import json
-        temp_collection = self.copy()
+        coll = self.collection()
         fc = {
             "type": "FeatureCollection",
             "features": [dict(type='Feature', **x)
-                         for x in list(temp_collection)],
+                         for x in list(coll)],
             "crs": None  # TODO
         }
-        del temp_collection
+        del coll
         return json.dumps(fc, indent=indent)
 
     def tempds(self, opname=None, ext="shp"):
@@ -82,64 +76,56 @@ class GeofuCollection(FionaCollection):
 
         return "/tmp/%s_%s.%s" % (self.name, opname, ext)
 
-    def centroid(self):
-        out_schema = self.schema.copy()
-        out_schema['geometry'] = 'Point'
+    def apply_shapely(self, method, args=None, call=True, out_geomtype=None,
+                      **kwargs):
+        import fiona
+        coll = self.collection()
+        out_schema = coll.schema.copy()
+        if not args:
+            args = []
+        if out_geomtype:
+            out_schema['geometry'] = out_geomtype
 
-        tempds = self.tempds("centroids")
-        with collection(tempds, "w",
+        tempds = self.tempds(method)
+        with fiona.collection(tempds, "w",
                         "ESRI Shapefile", out_schema) as out_collection:
-            for in_feature in self:
+            for in_feature in coll:
                 out_feature = in_feature.copy()
-                out_feature['geometry'] = mapping(
-                    shape(in_feature['geometry']).centroid
-                    #shape(in_feature['geometry']).representative_point()
-                )
-                out_collection.write(out_feature)
+                if call:
+                    geom = mapping(
+                        getattr(shape(in_feature['geometry']), method)(*args, **kwargs)
+                    )
+                else:
+                    # it's not a method, it's a property
+                    geom = mapping(
+                        getattr(shape(in_feature['geometry']), method)
+                    )
 
-        return collection(tempds, "r")
+                out_feature['geometry'] = geom
+                out_collection.write(out_feature)
+        return Layer(tempds)
+
+    def centroid(self):
+        return self.apply_shapely("centroid", call=False, out_geomtype="Point")
 
     def simplify(self, tolerance):
-        out_schema = self.schema.copy()
-
-        tempds = self.tempds("simple_%s" % tolerance)
-        with collection(tempds, "w",
-                        "ESRI Shapefile", out_schema) as out_collection:
-            for in_feature in self:
-                out_feature = in_feature.copy()
-                out_feature['geometry'] = mapping(
-                    shape(in_feature['geometry']).simplify(tolerance)
-                )
-                out_collection.write(out_feature)
-
-        return collection(tempds, "r")
+        return self.apply_shapely("simplify", [tolerance])
 
     def buffer(self, distance):
-        out_schema = self.schema.copy()
-        out_schema['geometry'] = 'Polygon'
-
-        tempds = self.tempds("buffer_%s" % distance)
-        with collection(tempds, "w",
-                        "ESRI Shapefile", out_schema) as out_collection:
-            for in_feature in self:
-                out_feature = in_feature.copy()
-                out_feature['geometry'] = mapping(
-                    shape(in_feature['geometry']).buffer(distance)
-                )
-                out_collection.write(out_feature)
-
-        return collection(tempds, "r")
+        return self.apply_shapely("buffer", [distance], out_geomtype="Polygon")
 
     def reproject(self, crsish):
+        import fiona
         in_proj = Proj(self.crs)
-        out_schema = self.schema.copy()
+        coll = self.collection()
+        out_schema = coll.schema.copy()
         out_crs = guess_crs(crsish)
 
         tmpds = self.tempds("reproject_%s" % crsish)
-        with collection(tmpds, "w", "ESRI Shapefile",
+        with fiona.collection(tmpds, "w", "ESRI Shapefile",
                         out_schema, crs=out_crs) as out_collection:
             out_proj = Proj(out_collection.crs)
-            for in_feature in self:
+            for in_feature in coll:
 
                 out_feature = in_feature.copy()
                 x2, y2 = transform(in_proj, out_proj,
@@ -147,43 +133,14 @@ class GeofuCollection(FionaCollection):
                 out_feature['geometry']['coordinates'] = x2, y2
                 out_collection.write(out_feature)
 
-        return collection(tmpds, "r")
+        return Layer(tmpds)
 
 
-def collection(path, mode='r', driver=None, schema=None, crs=None, encoding=None):
-    """
-    Open file at ``path`` in ``mode`` "r" (read), "a" (append), or
-    "w" (write) and return a ``Collection`` object.
-
-    In write mode, a driver name such as "ESRI Shapefile" or "GPX" (see
-    OGR docs or ``ogr2ogr --help`` on the command line) and a schema
-    mapping such as:
-
-      {'geometry': 'Point', 'properties': { 'class': 'int', 'label':
-      'str', 'value': 'float'}}
-
-    must be provided. A coordinate reference system for collections in
-    write mode can be defined by the ``crs`` parameter. It takes Proj4
-    style mappings like
-
-      {'proj': 'longlat', 'ellps': 'WGS84', 'datum': 'WGS84',
-       'no_defs': True}
-
-    The drivers used by Fiona will try to detect the encoding of data
-    files. If they fail, you may provide the proper ``encoding``, such as
-    'Windows-1252' for the Natural Earth datasets.
-    """
+def load(path):
     import os
-    if mode in ('a', 'r'):
-        if not os.path.exists(path):
-            raise IOError("no such file or directory: %r" % path)
-        c = GeofuCollection(path, mode, encoding=encoding)
-    elif mode == 'w':
-        c = GeofuCollection(path, mode=mode, crs=crs, driver=driver,
-                            schema=schema, encoding=encoding)
-    else:
-        raise ValueError(
-            "mode string must be one of 'r', 'w', or 'a', not %s" % mode)
+    if not os.path.exists(path):
+        raise IOError("no such file or directory: %r" % path)
+    c = Layer(path)
     return c
 
 
