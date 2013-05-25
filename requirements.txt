@@ -2,3 +2,7 @@ fiona
 shapely
 pyproj
 requests
+Pillow
+
+# pyzmq
+# tornado

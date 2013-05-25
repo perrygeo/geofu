@@ -1,16 +1,23 @@
 from geofu import collection
 
-points = collection("test_data/test_pts.shp", "r")
+pts = collection("test_data/at_shelters.shp", "r")
 
-# reproject to utm zone 10 nad83, epsg code 26910
-points_proj = points.reproject(26910)
+# reproject to US National Atlas
+#states = state_centroids.reproject(2163)
+pts = polys.centroid()
+
+import ipdb; ipdb.set_trace()
 
 # buffer the points by 5000 meters
-point_buffers = points_proj.buffer(5000)
+#point_buffers = points_proj.buffer(5000)
 
-#print point_buffers.geojson(indent=2)
+# print point_buffers.geojson(indent=2)[:200]
+# print "And again..."
+# print point_buffers.geojson(indent=2)[:200]
+
 #print point_buffers.validate_geojson()
-#print point_buffers.mapfart()
+# print point_buffers.mapfart(display=True)
+
 
 # TODO
 #print point_buffers.save()

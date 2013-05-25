@@ -13,13 +13,45 @@ class GeofuCollection(FionaCollection):
     Geofu collection extends fiona collection
     """
 
-    def mapfart(self):
+    def copy(self):
+        encoding = self.encoding
+        print encoding
+        if encoding.lower() in ["-ogr-detected-encoding"]:
+            encoding = None
+
+        return collection(
+            self.path,
+            mode='r',
+            driver=self.driver,
+            schema=self.schema,
+            crs=self.crs,
+            encoding=encoding
+        )
+
+    rewind = copy
+
+    def mapfart(self, display=False, url_only=False):
         import requests
         mapfart_url = 'http://mapfart.com/api/fart'
         res = requests.post(mapfart_url, data=self.geojson())
         if res.status_code != 200:
             raise Exception("Mapfart returned a %d" % res.status_code)
-        return res.text.strip()
+        url = res.text.strip()
+        if url_only:
+            return url
+        res = requests.get(url)
+        if res.status_code == 200:
+            filename = self.tempds(ext="png")
+            with open(filename, 'wb') as fh:
+                for chunk in res.iter_content(1024):
+                    fh.write(chunk)
+            if display:
+                from PIL import Image
+                im = Image.open(filename)
+                im.show()
+            return filename
+        else:
+            raise Exception("Mapfart returned a %d" % res.status_code)
 
     def validate_geojson(self):
         import requests
@@ -29,15 +61,58 @@ class GeofuCollection(FionaCollection):
 
     def geojson(self, indent=None):
         import json
+        temp_collection = self.copy()
         fc = {
             "type": "FeatureCollection",
-            "features": [dict(type='Feature', **x) for x in list(self)],
+            "features": [dict(type='Feature', **x)
+                         for x in list(temp_collection)],
             "crs": None  # TODO
         }
+        del temp_collection
         return json.dumps(fc, indent=indent)
 
-    def tempds(self, opname):
-        return "/tmp/%s_%s.shp" % (self.name, opname)
+    def tempds(self, opname=None, ext="shp"):
+        if not opname:
+            import random
+            import string
+            opname = ''.join(random.choice(
+                                string.ascii_uppercase + string.digits)
+                             for x in range(10)
+            )
+
+        return "/tmp/%s_%s.%s" % (self.name, opname, ext)
+
+    def centroid(self):
+        out_schema = self.schema.copy()
+        out_schema['geometry'] = 'Point'
+
+        tempds = self.tempds("centroids")
+        with collection(tempds, "w",
+                        "ESRI Shapefile", out_schema) as out_collection:
+            for in_feature in self:
+                out_feature = in_feature.copy()
+                out_feature['geometry'] = mapping(
+                    shape(in_feature['geometry']).centroid
+                    #shape(in_feature['geometry']).representative_point()
+                )
+                out_collection.write(out_feature)
+
+        return collection(tempds, "r")
+
+    def simplify(self, tolerance):
+        out_schema = self.schema.copy()
+
+        tempds = self.tempds("simple_%s" % tolerance)
+        with collection(tempds, "w",
+                        "ESRI Shapefile", out_schema) as out_collection:
+            for in_feature in self:
+                out_feature = in_feature.copy()
+                out_feature['geometry'] = mapping(
+                    shape(in_feature['geometry']).simplify(tolerance)
+                )
+                out_collection.write(out_feature)
+
+        return collection(tempds, "r")
 
     def buffer(self, distance):
         out_schema = self.schema.copy()
@@ -75,7 +150,7 @@ class GeofuCollection(FionaCollection):
         return collection(tmpds, "r")
 
 
-def open(path, mode='r', driver=None, schema=None, crs=None, encoding=None):
+def collection(path, mode='r', driver=None, schema=None, crs=None, encoding=None):
     """
     Open file at ``path`` in ``mode`` "r" (read), "a" (append), or
     "w" (write) and return a ``Collection`` object.
@@ -110,9 +185,6 @@ def open(path, mode='r', driver=None, schema=None, crs=None, encoding=None):
         raise ValueError(
             "mode string must be one of 'r', 'w', or 'a', not %s" % mode)
     return c
-
-
-collection = open
 
 
 def guess_crs(thing):
