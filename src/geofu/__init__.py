@@ -5,6 +5,16 @@ geofu
 
 from shapely.geometry import mapping, shape
 from pyproj import Proj, transform
+from fiona import collection
+from PIL import Image
+import requests
+import json
+import random
+import string
+import os
+from fiona import crs
+import fiona
+import mapnik
 
 
 class Layer():
@@ -12,6 +22,9 @@ class Layer():
     def __init__(self, path):
         self.path = path
         self.name = "testname"
+
+    def __repr__(self):
+        return "<geofu.Layer at `%s`>" % self.path
 
     @property
     def crs(self):
@@ -21,18 +34,18 @@ class Layer():
         """
         a fiona collection for the layer
         """
-        from fiona import collection
         return collection(self.path, *args, **kwargs)
 
-    def mapfart(self, show=False, url_only=False):
-        import requests
+    def mapfart(self, show=False, download=False):
         mapfart_url = 'http://mapfart.com/api/fart'
         res = requests.post(mapfart_url, data=self.geojson())
         if res.status_code != 200:
             raise Exception("Mapfart returned a %d" % res.status_code)
         url = res.text.strip()
-        if url_only:
+
+        if not download and not show:
             return url
+
         res = requests.get(url)
         if res.status_code == 200:
             filename = self.tempds(ext="png")
@@ -40,21 +53,53 @@ class Layer():
                 for chunk in res.iter_content(1024):
                     fh.write(chunk)
             if show:
-                from PIL import Image
                 im = Image.open(filename)
                 im.show()
             return filename
         else:
             raise Exception("Mapfart returned a %d" % res.status_code)
 
+    def render_png(self, show=False):
+        m = mapnik.Map(600, 300)
+        m.background = mapnik.Color('white')
+        s = mapnik.Style()
+        r = mapnik.Rule()
+
+        if "point" in self.collection().schema['geometry'].lower():
+            point_symbolizer = mapnik.PointSymbolizer()
+            r.symbols.append(point_symbolizer)
+        else:
+            polygon_symbolizer = mapnik.PolygonSymbolizer(
+                mapnik.Color('#f2eff9')
+            )
+            r.symbols.append(polygon_symbolizer)
+
+            line_symbolizer = mapnik.LineSymbolizer(
+                mapnik.Color('rgb(50%,50%,50%)'), 0.8
+            )
+            r.symbols.append(line_symbolizer)
+
+        s.rules.append(r)
+        m.append_style('My Style', s)
+        ds = mapnik.Shapefile(file=self.path)
+        layer = mapnik.Layer('world')
+        layer.datasource = ds
+        layer.styles.append('My Style')
+        m.layers.append(layer)
+        m.zoom_all()
+        outfile = '/tmp/world.png'
+        mapnik.render_to_file(m, outfile, 'png')
+        if show:
+            im = Image.open(outfile)
+            im.show()
+        return outfile
+
     def validate_geojson(self):
-        import requests
         validate_endpoint = 'http://geojsonlint.com/validate'
         res = requests.post(validate_endpoint, data=self.geojson())
         return res.json()
 
     def geojson(self, indent=None):
-        import json
         coll = self.collection()
         fc = {
             "type": "FeatureCollection",
@@ -67,8 +112,6 @@ class Layer():
 
     def tempds(self, opname=None, ext="shp"):
         if not opname:
-            import random
-            import string
             opname = ''.join(random.choice(
                                 string.ascii_uppercase + string.digits)
                              for x in range(10)
@@ -78,7 +121,6 @@ class Layer():
 
     def apply_shapely(self, method, args=None, call=True, out_geomtype=None,
                       **kwargs):
-        import fiona
         coll = self.collection()
         out_schema = coll.schema.copy()
         if not args:
@@ -115,7 +157,6 @@ class Layer():
         return self.apply_shapely("buffer", [distance], out_geomtype="Polygon")
 
     def reproject(self, crsish):
-        import fiona
         in_proj = Proj(self.crs)
         coll = self.collection()
         out_schema = coll.schema.copy()
@@ -137,7 +178,6 @@ class Layer():
 
 
 def load(path):
-    import os
     if not os.path.exists(path):
         raise IOError("no such file or directory: %r" % path)
     c = Layer(path)
@@ -145,7 +185,6 @@ def load(path):
 
 
 def guess_crs(thing):
-    from fiona import crs
 
     try:
         #is it a crs object itself?

@@ -7,7 +7,8 @@ def read(fname):
 
 
 def requirements():
-    return [i.strip() for i in open("requirements.txt").readlines()]
+    return [i.strip() for i in open("requirements.txt").readlines()
+            if not i.startswith("http")]
 
 setup(
     name="geofu",

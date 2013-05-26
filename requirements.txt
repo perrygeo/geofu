@@ -3,6 +3,13 @@ shapely
 pyproj
 requests
 Pillow
-
-# pyzmq
-# tornado
+ipython
+GDAL
+pyshp
+pyyaml
+pykml
+lxml
+ordereddict
+tinycss
+argparse
+https://github.com/kartograph/kartograph.py/zipball/master
