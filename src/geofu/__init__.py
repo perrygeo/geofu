@@ -59,7 +59,16 @@ class Layer():
         else:
             raise Exception("Mapfart returned a %d" % res.status_code)
 
-    def overlay(self, layer2, method="union"):
+    def intersection(self, layer2):
+        return self._overlay(layer2, method="intersection")
+
+    def union(self, layer2):
+        return self._overlay(layer2, method="union")
+
+    def identity(self, layer2):
+        return self._overlay(layer2, method="identity")
+
+    def _overlay(self, layer2, method):
         assert method in ['union', 'intersection', 'identity']
 
         from shapely.geometry import shape
