@@ -15,6 +15,9 @@ import os
 from fiona import crs
 import fiona
 import mapnik
+from shapely.ops import unary_union, polygonize
+from shapely.geometry import MultiLineString
+from rtree import index
 
 
 class Layer():
@@ -71,10 +74,6 @@ class Layer():
     def _overlay(self, layer2, method):
         assert method in ['union', 'intersection', 'identity']
 
-        from shapely.geometry import shape
-        from shapely.ops import unary_union, polygonize
-        from rtree import index
-
         idx1 = index.Index()
         idx2 = index.Index()
 
@@ -82,6 +81,7 @@ class Layer():
         # advantage: don't have to reopen ds and seek on disk
         # disadvantage: have to keep everything in memory
         #  {id: (shapely geom, properties dict) }
+        # TODO just use the index as the id and just copy the fiona records?
         features1 = {}
         features2 = {}
         rings1 = []
@@ -97,13 +97,15 @@ class Layer():
             if hasattr(geom, 'geoms'):
                 for poly in geom.geoms:  # if it's a multipolygon
                     if not poly.is_valid:
-                        print "***** Geometry from features1 is not valid, fixing by buffer 0"
+                        print "\t geom from self layer is not valid," + \
+                              " attempting fix by buffer 0"
                         poly = poly.buffer(0)
                     rings1.append(poly.exterior)
                     rings1.extend(poly.interiors)
             else:
                 if not geom.is_valid:
-                    print "***** Geometry from features1 is not valid, fixing by buffer 0"
+                    print "\tgeom from self layer is not valid," + \
+                          " attempting fix by buffer 0"
                     geom = geom.buffer(0)
                 rings1.append(geom.exterior)
                 rings1.extend(geom.interiors)
@@ -119,22 +121,20 @@ class Layer():
             if hasattr(geom, 'geoms'):
                 for poly in geom.geoms:  # multipolygon
                     if not poly.is_valid:
-                        print "***** Geometry from features2 is not valid, fixing by buffer 0"
+                        print "\t geom from layer2 is not valid," + \
+                              " attempting fix by buffer 0"
                         poly = poly.buffer(0)
                     rings2.append(poly.exterior)
                     rings2.extend(poly.interiors)
             else:
                 if not geom.is_valid:
-                    print "***** Geometry from features2 is not valid, fixing by buffer 0"
+                    print "\t geom from layer2 is not valid," + \
+                          " attempting fix by buffer 0"
                     geom = geom.buffer(0)
                 rings2.append(geom.exterior)
                 rings2.extend(geom.interiors)
 
-        #print "\t", len([x for x in rings if not x.is_valid]), "invalid rings"
         #rings = [x for x in rings if x.is_valid]
-
-        from shapely.geometry import MultiLineString
-
         mls1 = MultiLineString(rings1)
         mls2 = MultiLineString(rings2)
 
@@ -170,8 +170,7 @@ class Layer():
 
         tempds = self.tempds(method)
         out_collection = fiona.collection(
-            tempds, "w", "ESRI Shapefile", out_schema
-        )
+            tempds, "w", "ESRI Shapefile", out_schema)
 
         print "determine spatial relationship and write new polys"
         for fid, newpoly in enumerate(newpolys):
@@ -212,7 +211,8 @@ class Layer():
 
             # write out newpoly with attrs gathered from prop1 & prop2
             if not prop1:
-                prop1 = dict.fromkeys(self.collection().schema['properties'].keys(), None)
+                prop1 = dict.fromkeys(
+                    self.collection().schema['properties'].keys(), None)
 
             if not prop2:
                 prop2 = dict.fromkeys(layer2_schema_map.keys(), None)
@@ -225,8 +225,7 @@ class Layer():
             out_feature = {
                 'id': fid,
                 'properties': newprop,
-                'geometry': mapping(newpoly)
-            }
+                'geometry': mapping(newpoly)}
 
             out_collection.write(out_feature)
 
@@ -244,13 +243,11 @@ class Layer():
             r.symbols.append(point_symbolizer)
         else:
             polygon_symbolizer = mapnik.PolygonSymbolizer(
-                mapnik.Color('#f2eff9')
-            )
+                mapnik.Color('#f2eff9'))
             r.symbols.append(polygon_symbolizer)
 
             line_symbolizer = mapnik.LineSymbolizer(
-                mapnik.Color('rgb(50%,50%,50%)'), 0.8
-            )
+                mapnik.Color('rgb(50%,50%,50%)'), 0.8)
             r.symbols.append(line_symbolizer)
 
         s.rules.append(r)
@@ -266,6 +263,7 @@ class Layer():
         if show:
             im = Image.open(outfile)
             im.show()
+            return im
         return outfile
 
     def validate_geojson(self):
@@ -279,17 +277,14 @@ class Layer():
             "type": "FeatureCollection",
             "features": [dict(type='Feature', **x)
                          for x in list(coll)],
-            "crs": None  # TODO
-        }
+            "crs": None}  # TODO
         del coll
         return json.dumps(fc, indent=indent)
 
     def tempds(self, opname=None, ext="shp"):
         if not opname:
-            opname = ''.join(random.choice(
-                                string.ascii_uppercase + string.digits)
-                             for x in range(10)
-            )
+            opname = ''.join(random.choice(string.ascii_uppercase +
+                             string.digits) for x in range(10))
 
         return "/tmp/%s_%s.%s" % (self.name, opname, ext)
 
@@ -303,13 +298,14 @@ class Layer():
             out_schema['geometry'] = out_geomtype
 
         tempds = self.tempds(method)
-        with fiona.collection(tempds, "w",
-                        "ESRI Shapefile", out_schema) as out_collection:
+        with fiona.collection(tempds, "w", "ESRI Shapefile",
+                              out_schema, crs=self.crs) as out_collection:
             for in_feature in coll:
                 out_feature = in_feature.copy()
                 if call:
                     geom = mapping(
-                        getattr(shape(in_feature['geometry']), method)(*args, **kwargs)
+                        getattr(shape(in_feature['geometry']),
+                                method)(*args, **kwargs)
                     )
                 else:
                     # it's not a method, it's a property
@@ -338,17 +334,36 @@ class Layer():
 
         tmpds = self.tempds("reproject_%s" % crsish)
         with fiona.collection(tmpds, "w", "ESRI Shapefile",
-                        out_schema, crs=out_crs) as out_collection:
+                              out_schema, crs=out_crs) as out_collection:
             out_proj = Proj(out_collection.crs)
             for in_feature in coll:
-
                 out_feature = in_feature.copy()
-                x2, y2 = transform(in_proj, out_proj,
-                                   *in_feature['geometry']['coordinates'])
-                out_feature['geometry']['coordinates'] = x2, y2
+
+                if in_feature['geometry']['type'] == "Polygon":
+                    new_coords = []
+                    for ring in in_feature['geometry']['coordinates']:
+                        x2, y2 = transform(in_proj, out_proj, *zip(*ring))
+                        new_coords.append(zip(x2, y2))
+                    out_feature['geometry']['coordinates'] = new_coords
+
+                elif in_feature['geometry']['type'] == "Point":
+                    x2, y2 = transform(in_proj, out_proj,
+                                       *in_feature['geometry']['coordinates'])
+                    out_feature['geometry']['coordinates'] = x2, y2
+
                 out_collection.write(out_feature)
 
         return Layer(tmpds)
+
+    def save(self, filename, driver="ESRI Shapefile"):
+        coll = self.collection()
+        out_schema = coll.schema.copy()
+        with fiona.collection(filename, "w", schema=out_schema,
+                              crs=self.crs, driver=driver) as out_collection:
+            for in_feature in coll:
+                out_collection.write(in_feature.copy())
+
+        return Layer(filename)
 
 
 def load(path):
