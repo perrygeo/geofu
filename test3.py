@@ -1,96 +1,155 @@
 from matplotlib import pyplot
-from shapely.geometry import LineString, Point
 from descartes import PolygonPatch
-import random
 
-BLUE = "#4444FF"
-GRAY = "#AAAAAA"
-SIZE = (10, 9)
 label_hits = ["centroid"]
 
-def plot_poly(ax, ob, label, c=BLUE):
+
+def plot_poly(ax, ob, label, c="#ffff00"):
     if label not in label_hits:
-        patch1 = PolygonPatch(ob, fc=c, ec="#444444", alpha=1, zorder=2, label=label)
+        patch1 = PolygonPatch(ob, fc=c, ec=c, alpha=0.8, zorder=2, label=label)
         label_hits.append(label)
     else:
-        patch1 = PolygonPatch(ob, fc=c, ec="#444444", alpha=1, zorder=2)
+        patch1 = PolygonPatch(ob, fc=c, ec=c, alpha=0.8, zorder=2)
 
     ax.add_patch(patch1)
 
-fig = pyplot.figure(1, figsize=SIZE, dpi=90)
+
+fig = pyplot.figure(1, figsize=(9, 8), dpi=90)
 ax = fig.add_subplot(111)
 
-print "creating layers..."
-line1 = LineString([(0, 0), (20, 10), (0, 20), (20, 20), (30, 10), (10, 0)])
-line2 = LineString([(20, 0), (40, 10), (20, 20), (50, 20), (50, 10), (30, 0)])
-line3 = LineString([(10, 20), (30, 30), (10, 40), (30, 40), (40, 30), (20, 20)])
-
-layer1 = [line1.buffer(random.uniform(1,3)), line2.buffer(random.uniform(1,3)), line3.buffer(random.uniform(1,3))] 
-layer2 = [Point((random.uniform(0,40), random.uniform(0,40))).buffer(random.uniform(0.2,2)) for x in range(150)]
+print "reading two polygon layers..."
+from fiona import collection
+coll1 = collection("test_data/union_test/states.shp")
+coll2 = collection("test_data/union_test/major_urban_areas.shp")
+#coll2 = collection("test_data/testname_buffer.shp")
 
 ######################
-from shapely.ops import unary_union
+from shapely.geometry import shape
+from shapely.ops import unary_union, polygonize
+
+from rtree import index
+idx1 = index.Index()
+idx2 = index.Index()
 
 print "unioning rings"
+layer1 = {}  # id: shapely geom, properties dict
+layer2 = {}  # id: shapely geom, properties dict
 rings = []
-for layer in [layer1, layer2]:
-    for poly in layer:
-        rings.append(poly.exterior)
-        rings.extend(poly.interiors)
+
+print "\tcollection1"
+for rec in coll1:
+    geom = shape(rec['geometry'])
+
+    if rec['properties']['STATE_NAME'] == 'Massachusetts':
+        continue  # continue to exclude Mass
+    else:
+        pass  # continue to exclude everything but Mass
+
+    rid = int(rec['id'])
+    layer1[rid] = (geom, rec['properties'])
+    idx1.insert(rid, geom.bounds)
+    if hasattr(geom, 'geoms'):
+        for poly in geom.geoms:  # if it's a multipolygon
+            if not poly.is_valid:
+                print "***** Geometry from layer1 is not valid, skipping" # fixing by buffer 0"
+                continue
+                poly = poly.buffer(0)
+            rings.append(poly.exterior)
+            rings.extend(poly.interiors)
+    else:
+        if not geom.is_valid:
+            print "***** Geometry from layer1 is not valid, skipping" # fixing by buffer 0"
+            continue
+            geom = geom.buffer(0)
+        rings.append(geom.exterior)
+        rings.extend(geom.interiors)
+
+
+print "\tcollection2"
+for rec in coll2:
+    geom = shape(rec['geometry'])
+
+    rid = int(rec['id'])
+    layer2[rid] = (geom, rec['properties'])
+    idx2.insert(rid, geom.bounds)
+
+    if hasattr(geom, 'geoms'):
+        for poly in geom.geoms:  # multipolygon
+            if not poly.is_valid:
+                print "***** Geometry from layer2 is not valid, skipping" #fixing by buffer 0"
+                continue
+                poly = poly.buffer(0)
+            rings.append(poly.exterior)
+            rings.extend(poly.interiors)
+    else:
+        if not geom.is_valid:
+            print "***** Geometry from layer2 is not valid, skipping" #fixing by buffer 0"
+            continue
+            geom = geom.buffer(0)
+        rings.append(geom.exterior)
+        rings.extend(geom.interiors)
+
+print "\t", len([x for x in rings if not x.is_valid]), "invalid rings"
+rings = [x for x in rings if x.is_valid]
 
 mm = unary_union(rings)
 
 print "polygonize rings"
-from shapely.ops import polygonize
 newpolys = polygonize(mm)
 
 print "determine spatial relationship and plot new polys"
-for p in newpolys:
-    cent = p.representative_point()
+for newpoly in newpolys:
+    cent = newpoly.representative_point()
 
-    # Test intersection with original polys 
-    # and transfer attrs
-    # this is where the exponential performance decay hits ya
-    # need a way to query with spatial index	
+    # Test intersection with original polys
     layer1_hit = False
     layer2_hit = False
-    for poly in layer1:
-        if cent.intersects(poly):
+    candidates1 = list(idx1.intersection(cent.bounds))
+    candidates2 = list(idx2.intersection(cent.bounds))
+
+    for cand in candidates1:
+        if cent.intersects(layer1[cand][0]):
             layer1_hit = True
-            # TODO record WHICH poly was hit and collect attrs
-            break  # use the first one
-    for poly in layer2:
-        if cent.intersects(poly):
+            # prop1 = layer1[cand][1]  # properties
+            break
+
+    for cand in candidates2:
+        if cent.intersects(layer2[cand][0]):
             layer2_hit = True
-            # TODO record WHICH poly was hit and collect attrs
-            break  # use the first one
-    #print "\t%s\t\tlayer1: %s\tlayer2: %s" % (cent, layer1_hit, layer2_hit)
-    # TODO write out p with attrs gathered from ^^
+            # prop2 = layer2[cand][1]  # properties
+            break
 
     if layer1_hit and layer2_hit:  # intersection
         color = "#FF4444"
         label = "intersection"
-    elif layer1_hit and not layer2_hit:   # identity layer1
+    elif layer1_hit and not layer2_hit:
         color = "#44FF44"
-        label = "identity 1"
-    elif not layer1_hit and layer2_hit:   # identity layer2
+        label = "layer 1 only"
+    elif not layer1_hit and layer2_hit: 
         color = "#4444FF"
-        label = "identity 2"
+        label = "layer 2 only"
     else:  # not even in the union
         color = "#AAAAAA"
         label = "null"
-    # union = intersection + identity1 + identity2
-    # sym diff = identity1 + identity2
 
-    plot_poly(ax, p, label, color)
-    plot_poly(ax, cent.buffer(0.05), "centroid", "#000000")
+    # TODO write out newpoly with attrs gathered from prop1 & prop2
+    # output based on type of overlay
+    #   union = intersection + only1 + only2
+    #   sym diff = only1 + only2
+    #   indentity1 = only1 + intersection
+    #   indentity2 = only1 + intersection
+    #   intersection = intersection
 
 #####################
 
+    plot_poly(ax, newpoly, label, color)
+    #plot_poly(ax, cent.buffer(0.05), "centroid", "#000000")
+
+
 ax.set_title('Polygon sets')
 ax.legend()
-xrange = [-2, 58]
-yrange = [-2, 42]
+xrange = [-85, -64]
+yrange = [30, 48]
 ax.set_xlim(*xrange)
 ax.set_xticks(range(*xrange) + [xrange[-1]])
 ax.set_ylim(*yrange)

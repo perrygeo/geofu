@@ -6,7 +6,14 @@ pts = geofu.load("test_data/at_shelters.shp")
 print pts.crs
 
 # reproject to US National Atlas
-pts = pts.reproject(2163)
+#pts = pts.reproject(2163)
+
+ptbuff = pts.buffer(0.4)
+print ptbuff
+
+
+import sys
+sys.exit()
 
 # buffer by 5km
 ptbuff = pts.buffer(5000)
