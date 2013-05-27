@@ -8,4 +8,7 @@ lot/settings_local.py
 .*.swp
 *.egg-info
 env-geofu/*
+build/*
 TODO
+test_data/*
+notebooks/*
