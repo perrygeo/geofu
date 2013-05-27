@@ -21,7 +21,7 @@ class Layer():
 
     def __init__(self, path):
         self.path = path
-        self.name = "testname"
+        self.name = self.collection().name
 
     def __repr__(self):
         return "<geofu.Layer at `%s`>" % self.path
@@ -58,6 +58,171 @@ class Layer():
             return filename
         else:
             raise Exception("Mapfart returned a %d" % res.status_code)
+
+    def overlay(self, layer2, method="union"):
+        assert method in ['union', 'intersection', 'identity']
+
+        from shapely.geometry import shape
+        from shapely.ops import unary_union, polygonize
+        from rtree import index
+
+        idx1 = index.Index()
+        idx2 = index.Index()
+
+        # for fast lookup of geometry and properties after spatial index
+        # advantage: don't have to reopen ds and seek on disk
+        # disadvantage: have to keep everything in memory
+        #  {id: (shapely geom, properties dict) }
+        features1 = {}
+        features2 = {}
+        rings1 = []
+        rings2 = []
+
+        print "gathering LinearRings"
+        print "\tself"
+        for rec in self.collection():
+            geom = shape(rec['geometry'])
+            rid = int(rec['id'])
+            features1[rid] = (geom, rec['properties'])
+            idx1.insert(rid, geom.bounds)
+            if hasattr(geom, 'geoms'):
+                for poly in geom.geoms:  # if it's a multipolygon
+                    if not poly.is_valid:
+                        print "***** Geometry from features1 is not valid, fixing by buffer 0"
+                        poly = poly.buffer(0)
+                    rings1.append(poly.exterior)
+                    rings1.extend(poly.interiors)
+            else:
+                if not geom.is_valid:
+                    print "***** Geometry from features1 is not valid, fixing by buffer 0"
+                    geom = geom.buffer(0)
+                rings1.append(geom.exterior)
+                rings1.extend(geom.interiors)
+
+        print "\tlayer2"
+        for rec in layer2.collection():
+            geom = shape(rec['geometry'])
+
+            rid = int(rec['id'])
+            features2[rid] = (geom, rec['properties'])
+            idx2.insert(rid, geom.bounds)
+
+            if hasattr(geom, 'geoms'):
+                for poly in geom.geoms:  # multipolygon
+                    if not poly.is_valid:
+                        print "***** Geometry from features2 is not valid, fixing by buffer 0"
+                        poly = poly.buffer(0)
+                    rings2.append(poly.exterior)
+                    rings2.extend(poly.interiors)
+            else:
+                if not geom.is_valid:
+                    print "***** Geometry from features2 is not valid, fixing by buffer 0"
+                    geom = geom.buffer(0)
+                rings2.append(geom.exterior)
+                rings2.extend(geom.interiors)
+
+        #print "\t", len([x for x in rings if not x.is_valid]), "invalid rings"
+        #rings = [x for x in rings if x.is_valid]
+
+        from shapely.geometry import MultiLineString
+
+        mls1 = MultiLineString(rings1)
+        mls2 = MultiLineString(rings2)
+
+        try:
+            print "calculating union (try the fast unary_union)"
+            mm = unary_union([mls1, mls2])
+        except:
+            print "FAILED"
+            print "calculating union again (using the slow a.union(b))"
+            mm = mls1.union(mls2)
+
+        print "polygonize rings"
+        newpolys = polygonize(mm)
+
+        # print "constructing new schema"
+        out_schema = self.collection().schema.copy()
+        # TODO polygon geomtype
+
+        layer2_schema_map = {}  # {old: new}
+        for key, value in layer2.collection().schema['properties'].items():
+            if key not in out_schema['properties']:
+                out_schema['properties'][key] = value
+            else:
+                # try to rename it
+                i = 2
+                while True:
+                    newkey = "%s_%d" % (key, i)
+                    if newkey not in out_schema['properties']:
+                        out_schema['properties'][newkey] = value
+                        layer2_schema_map[key] = newkey 
+                        break
+                    i += 1 
+
+        tempds = self.tempds(method)
+        out_collection = fiona.collection(
+            tempds, "w", "ESRI Shapefile", out_schema
+        )
+
+        print "determine spatial relationship and write new polys"
+        for fid, newpoly in enumerate(newpolys):
+            cent = newpoly.representative_point()
+
+            # Test intersection with original polys
+            layer1_hit = False
+            layer2_hit = False
+            prop1 = None
+            prop2 = None
+            candidates1 = list(idx1.intersection(cent.bounds))
+            candidates2 = list(idx2.intersection(cent.bounds))
+
+            for cand in candidates1:
+                if cent.intersects(features1[cand][0]):
+                    layer1_hit = True
+                    prop1 = features1[cand][1]  # properties
+                    break
+
+            for cand in candidates2:
+                if cent.intersects(features2[cand][0]):
+                    layer2_hit = True
+                    prop2 = features2[cand][1]  # properties
+                    break
+
+            # determine whether to output based on type of overlay
+            hit = False
+            if method == "intersection" and (layer1_hit and layer2_hit):
+                hit = True
+            elif method == "union" and (layer1_hit or layer2_hit):
+                hit = True
+            elif method == "identity" and ((layer1_hit and layer2_hit) or
+                           (layer1_hit and not layer2_hit)):
+                hit = True
+
+            if not hit:
+                continue
+
+            # write out newpoly with attrs gathered from prop1 & prop2
+            if not prop1:
+                prop1 = dict.fromkeys(self.collection().schema['properties'].keys(), None)
+
+            if not prop2:
+                prop2 = dict.fromkeys(layer2_schema_map.keys(), None)
+
+            newprop = prop1
+            for key, value in prop2.items():
+                newkey = layer2_schema_map[key]
+                newprop[newkey] = value
+
+            out_feature = {
+                'id': fid,
+                'properties': newprop,
+                'geometry': mapping(newpoly)
+            }
+
+            out_collection.write(out_feature)
+
+        out_collection.close()
+        return Layer(tempds)
 
     def render_png(self, show=False):
         m = mapnik.Map(600, 300)
