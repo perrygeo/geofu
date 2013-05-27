@@ -19,9 +19,9 @@ ax = fig.add_subplot(111)
 
 print "reading two polygon layers..."
 from fiona import collection
+#coll1 = collection("test_data/union_test/major_urban_areas.shp")
 coll1 = collection("test_data/union_test/states.shp")
-coll2 = collection("test_data/union_test/major_urban_areas.shp")
-#coll2 = collection("test_data/testname_buffer.shp")
+coll2 = collection("test_data/testname_buffer.shp") # buffered state centroids
 
 ######################
 from shapely.geometry import shape
@@ -34,16 +34,17 @@ idx2 = index.Index()
 print "unioning rings"
 layer1 = {}  # id: shapely geom, properties dict
 layer2 = {}  # id: shapely geom, properties dict
-rings = []
+rings1 = []
+rings2 = []
 
 print "\tcollection1"
 for rec in coll1:
     geom = shape(rec['geometry'])
 
-    if rec['properties']['STATE_NAME'] == 'Massachusetts':
-        continue  # continue to exclude Mass
-    else:
-        pass  # continue to exclude everything but Mass
+    # if rec['properties']['STATE_NAME'] == 'Massachusetts':
+    #     pass  # continue to exclude Mass
+    # else:
+    #     pass  # continue to exclude everything but Mass
 
     rid = int(rec['id'])
     layer1[rid] = (geom, rec['properties'])
@@ -51,18 +52,16 @@ for rec in coll1:
     if hasattr(geom, 'geoms'):
         for poly in geom.geoms:  # if it's a multipolygon
             if not poly.is_valid:
-                print "***** Geometry from layer1 is not valid, skipping" # fixing by buffer 0"
-                continue
+                print "***** Geometry from layer1 is not valid, fixing by buffer 0"
                 poly = poly.buffer(0)
-            rings.append(poly.exterior)
-            rings.extend(poly.interiors)
+            rings1.append(poly.exterior)
+            rings1.extend(poly.interiors)
     else:
         if not geom.is_valid:
-            print "***** Geometry from layer1 is not valid, skipping" # fixing by buffer 0"
-            continue
+            print "***** Geometry from layer1 is not valid, fixing by buffer 0"
             geom = geom.buffer(0)
-        rings.append(geom.exterior)
-        rings.extend(geom.interiors)
+        rings1.append(geom.exterior)
+        rings1.extend(geom.interiors)
 
 
 print "\tcollection2"
@@ -76,23 +75,32 @@ for rec in coll2:
     if hasattr(geom, 'geoms'):
         for poly in geom.geoms:  # multipolygon
             if not poly.is_valid:
-                print "***** Geometry from layer2 is not valid, skipping" #fixing by buffer 0"
-                continue
+                print "***** Geometry from layer2 is not valid, fixing by buffer 0"
                 poly = poly.buffer(0)
-            rings.append(poly.exterior)
-            rings.extend(poly.interiors)
+            rings2.append(poly.exterior)
+            rings2.extend(poly.interiors)
     else:
         if not geom.is_valid:
-            print "***** Geometry from layer2 is not valid, skipping" #fixing by buffer 0"
-            continue
+            print "***** Geometry from layer2 is not valid, fixing by buffer 0"
             geom = geom.buffer(0)
-        rings.append(geom.exterior)
-        rings.extend(geom.interiors)
+        rings2.append(geom.exterior)
+        rings2.extend(geom.interiors)
 
-print "\t", len([x for x in rings if not x.is_valid]), "invalid rings"
-rings = [x for x in rings if x.is_valid]
+#print "\t", len([x for x in rings if not x.is_valid]), "invalid rings"
+#rings = [x for x in rings if x.is_valid]
 
-mm = unary_union(rings)
+from shapely.geometry import MultiLineString
+
+mls1 = MultiLineString(rings1)
+mls2 = MultiLineString(rings2)
+
+try:
+    print "calculating union (try the fast unary_union)"
+    mm = unary_union([mls1, mls2])
+except:
+    print "FAILED"
+    print "calculating union again (using the slow a.union(b))"
+    mm = mls1.union(mls2)
 
 print "polygonize rings"
 newpolys = polygonize(mm)
@@ -143,12 +151,12 @@ for newpoly in newpolys:
 #####################
 
     plot_poly(ax, newpoly, label, color)
-    #plot_poly(ax, cent.buffer(0.05), "centroid", "#000000")
+    plot_poly(ax, cent.buffer(0.03), "centroid", "#000000")
 
 
 ax.set_title('Polygon sets')
-ax.legend()
-xrange = [-85, -64]
+ax.legend(loc=4)
+xrange = [-87, -66]
 yrange = [30, 48]
 ax.set_xlim(*xrange)
 ax.set_xticks(range(*xrange) + [xrange[-1]])
