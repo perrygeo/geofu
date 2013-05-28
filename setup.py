@@ -23,6 +23,7 @@ setup(
     packages=['geofu'],
     long_description=read('README.md'),
     install_requires=requirements(),
+    scripts=['scripts/geofu'],
     classifiers=[
         "Development Status :: 1 - Planning",
         "Topic :: Utilities",
