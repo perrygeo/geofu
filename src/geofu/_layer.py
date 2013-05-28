@@ -233,8 +233,9 @@ class Layer():
         out_collection.close()
         return Layer(tempds)
 
-    def render_png(self, show=False):
-        m = mapnik.Map(600, 300)
+    def render_png(self, show=True):
+        #TODO scale dimensions to aspect ratio of data
+        m = mapnik.Map(800, 400)
         m.background = mapnik.Color('white')
         s = mapnik.Style()
         r = mapnik.Rule()
