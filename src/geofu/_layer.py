@@ -158,6 +158,7 @@ class Layer():
         for key, value in layer2.collection().schema['properties'].items():
             if key not in out_schema['properties']:
                 out_schema['properties'][key] = value
+                layer2_schema_map[key] = key
             else:
                 # try to rename it
                 i = 2
