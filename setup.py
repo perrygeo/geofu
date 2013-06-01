@@ -1,5 +1,7 @@
 import os
+import sys
 from setuptools import setup
+from setuptools.command.test import test as TestCommand
 
 
 def read(fname):
@@ -9,6 +11,19 @@ def read(fname):
 def requirements():
     return [i.strip() for i in open("requirements.txt").readlines()
             if not i.startswith("http")]
+
+
+class PyTest(TestCommand):
+    def finalize_options(self):
+        TestCommand.finalize_options(self)
+        self.test_args = []
+        self.test_suite = True
+
+    def run_tests(self):
+        import pytest
+        errno = pytest.main(self.test_args)
+        sys.exit(errno)
+
 
 setup(
     name="geofu",
@@ -24,6 +39,8 @@ setup(
     long_description=read('README.md'),
     install_requires=requirements(),
     scripts=['scripts/geofu'],
+    tests_require=['pytest'],
+    cmdclass = {'test': PyTest},
     classifiers=[
         "Development Status :: 1 - Planning",
         "Topic :: Utilities",
