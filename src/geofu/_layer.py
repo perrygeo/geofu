@@ -22,16 +22,28 @@ class Layer():
     Layer: wrapper class for all vector layers
     """
 
-    def __init__(self, path):
+    def __init__(self, path, name=None):
         self.path = path
-        self.name = self.collection().name
+        if name:
+            self.name = name
+        else:
+            self.name = "test"
+        self._source_crs = None
 
     def __repr__(self):
-        return "<geofu.Layer at `%s`>" % self.path
+        return "<geofu.Layer `%s` at `%s`>" % (self.name, self.path)
+
+    def assign_crs(self, crs):
+        self._source_crs = guess_crs(crs)
 
     @property
     def crs(self):
-        return self.collection().crs
+        if self._source_crs:
+            return self._source_crs
+        crs = self.collection().crs
+        if crs == {}:
+            crs = None
+        return crs
 
     @property
     def geomtype(self):
@@ -274,7 +286,6 @@ class Layer():
         if show:
             im = Image.open(outfile)
             im.show()
-            return im
         return outfile
 
     def validate_geojson(self):
@@ -282,7 +293,7 @@ class Layer():
         res = requests.post(validate_endpoint, data=self.geojson())
         return res.json()
 
-    def geojson(self, indent=None):
+    def as_dict(self, indent=None):
         coll = self.collection()
         fc = {
             "type": "FeatureCollection",
@@ -290,7 +301,10 @@ class Layer():
                          for x in list(coll)],
             "crs": None}  # TODO
         del coll
-        return json.dumps(fc, indent=indent)
+        return fc
+
+    def geojson(self, indent=None):
+        return json.dumps(self.as_dict(), indent=indent)
 
     def tempds(self, opname=None, ext="shp"):
         if not opname:
@@ -382,7 +396,6 @@ class Layer():
         import numpy as np
         from .utils import bbox_to_pixel_offsets
         gdal.PushErrorHandler('CPLQuietErrorHandler')
-        ##################
 
         vector_path = self.path
         rds = gdal.Open(band.path, GA_ReadOnly)
@@ -390,7 +403,7 @@ class Layer():
         rb = rds.GetRasterBand(1)  # TODO band.num
         rgt = rds.GetGeoTransform()
 
-        if nodata_value:
+        if nodata_value is not None:
             nodata_value = float(nodata_value)
             rb.SetNoDataValue(nodata_value)
 

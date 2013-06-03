@@ -21,5 +21,5 @@ def test_union(polygons, lines):
     assert unioned.geomtype == "Polygon"
 
 # TODO test with multipolygon for input & output
-
+# TODO test with bad geometries
 # TODO test for lines and points as a and b

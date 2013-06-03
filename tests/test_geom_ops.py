@@ -17,3 +17,11 @@ def test_poly_buffer(polygons):
 
 
 #TODO multi part features
+
+def test_line_simplify(lines):
+    d = lines.simplify(150)
+    assert d.geomtype == "LineString"
+
+def test_line_centroid(polygons):
+    d = polygons.centroid()
+    assert d.geomtype == "Point"

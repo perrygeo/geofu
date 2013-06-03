@@ -15,6 +15,11 @@ def points():
 
 
 @pytest.fixture
+def points_noproj():
+    return geofu.load(os.path.join(DATA, "points_noproj.shp"))
+
+
+@pytest.fixture
 def lines():
     return geofu.load(os.path.join(DATA, "lines.shp"))
 
