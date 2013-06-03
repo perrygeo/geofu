@@ -15,7 +15,10 @@ from shapely.ops import unary_union, polygonize
 from shapely.geometry import MultiLineString
 from rtree import index
 from .utils import guess_crs
+import logging
 
+logging.basicConfig(filename="/tmp/geofu.log", level=logging.DEBUG)
+log = logging.getLogger("geofu")
 
 class Layer():
     """
@@ -108,8 +111,8 @@ class Layer():
         rings1 = []
         rings2 = []
 
-        print "gathering LinearRings"
-        print "\tself"
+        log.debug("gathering LinearRings")
+        log.debug("\tself")
         for rec in self.collection():
             geom = shape(rec['geometry'])
             rid = int(rec['id'])
@@ -118,20 +121,20 @@ class Layer():
             if hasattr(geom, 'geoms'):
                 for poly in geom.geoms:  # if it's a multipolygon
                     if not poly.is_valid:
-                        print "\t geom from self layer is not valid," + \
-                              " attempting fix by buffer 0"
+                        log.debug("\tgeom from self layer is not valid," +
+                                  " attempting fix by buffer 0")
                         poly = poly.buffer(0)
                     rings1.append(poly.exterior)
                     rings1.extend(poly.interiors)
             else:
                 if not geom.is_valid:
-                    print "\tgeom from self layer is not valid," + \
-                          " attempting fix by buffer 0"
+                    log.debug("\tgeom from self layer is not valid," +
+                              " attempting fix by buffer 0")
                     geom = geom.buffer(0)
                 rings1.append(geom.exterior)
                 rings1.extend(geom.interiors)
 
-        print "\tlayer2"
+        log.debug("\tlayer2")
         for rec in layer2.collection():
             geom = shape(rec['geometry'])
 
@@ -142,15 +145,15 @@ class Layer():
             if hasattr(geom, 'geoms'):
                 for poly in geom.geoms:  # multipolygon
                     if not poly.is_valid:
-                        print "\t geom from layer2 is not valid," + \
-                              " attempting fix by buffer 0"
+                        log.debug("\t geom from layer2 is not valid," +
+                                  " attempting fix by buffer 0")
                         poly = poly.buffer(0)
                     rings2.append(poly.exterior)
                     rings2.extend(poly.interiors)
             else:
                 if not geom.is_valid:
-                    print "\t geom from layer2 is not valid," + \
-                          " attempting fix by buffer 0"
+                    log.debug("\t geom from layer2 is not valid," +
+                              " attempting fix by buffer 0")
                     geom = geom.buffer(0)
                 rings2.append(geom.exterior)
                 rings2.extend(geom.interiors)
@@ -160,17 +163,17 @@ class Layer():
         mls2 = MultiLineString(rings2)
 
         try:
-            print "calculating union (try the fast unary_union)"
+            log.debug("calculating union (try the fast unary_union)")
             mm = unary_union([mls1, mls2])
         except:
-            print "FAILED"
-            print "calculating union again (using the slow a.union(b))"
+            log.exception("unary_union FAILED")
+            log.debug("calculating union again (using the slow a.union(b))")
             mm = mls1.union(mls2)
 
-        print "polygonize rings"
+        log.debug("polygonize rings")
         newpolys = polygonize(mm)
 
-        # print "constructing new schema"
+        log.debug("constructing new schema")
         out_schema = self.collection().schema.copy()
         # TODO polygon geomtype
 
@@ -178,6 +181,7 @@ class Layer():
         for key, value in layer2.collection().schema['properties'].items():
             if key not in out_schema['properties']:
                 out_schema['properties'][key] = value
+                layer2_schema_map[key] = key
             else:
                 # try to rename it
                 i = 2
@@ -193,7 +197,7 @@ class Layer():
         out_collection = fiona.collection(
             tempds, "w", "ESRI Shapefile", out_schema)
 
-        print "determine spatial relationship and write new polys"
+        log.debug("determine spatial relationship")
         for fid, newpoly in enumerate(newpolys):
             cent = newpoly.representative_point()
 
@@ -230,7 +234,7 @@ class Layer():
             if not hit:
                 continue
 
-            # write out newpoly with attrs gathered from prop1 & prop2
+            log.debug("write newpoly with attrs gathered from prop1 & prop2")
             if not prop1:
                 prop1 = dict.fromkeys(
                     self.collection().schema['properties'].keys(), None)
