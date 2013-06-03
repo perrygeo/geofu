@@ -12,4 +12,6 @@ lxml
 ordereddict
 tinycss
 argparse
-https://github.com/kartograph/kartograph.py/zipball/master
+rtree
+pandas
+pytest
