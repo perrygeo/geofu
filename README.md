@@ -1,3 +1,9 @@
+
+# This project has been abandoned
+##  The concept is very similar to geopandas which has a better implementation and more momentum. So I'll move the best ideas to [my geopandas fork](https://github.com/perrygeo/geopandas).
+
+
+
 Geofu aims to provide a python module that works at the level of abstraction that is common in day-to-day GIS and spatial analysis tasks.
 
 IOW, the goal is to think about operations on _layers_ rather than dig deep into the features. All the details of _how_ the operation is done is hidden behind a clean API. If you have to iterate through the features or otherwise get down to lower-level constructs, you probably shouldn't be using it.
